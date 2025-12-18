@@ -4,11 +4,20 @@
 基本的な四則演算をサポートする対話型電卓
 """
 
-import ast
 import operator
+import re
+from collections import namedtuple
+from typing import Union
+
+# namedtuple定義
+InfixOp = namedtuple('InfixOp', ['op'])
+PrefixOp = namedtuple('PrefixOp', ['op'])
+Paren = namedtuple('Paren', [])
+
+Token = Union[float, InfixOp, PrefixOp]
 
 
-def calculate(expression):
+def calculate(expression: str) -> float:
     """
     数式を評価して結果を返す（安全な方法で）
     
@@ -23,45 +32,128 @@ def calculate(expression):
         ZeroDivisionError: ゼロ除算の場合
     """
     # 許可する演算子の定義
-    operators = {
-        ast.Add: operator.add,
-        ast.Sub: operator.sub,
-        ast.Mult: operator.mul,
-        ast.Div: operator.truediv,
-        ast.USub: operator.neg,
-        ast.UAdd: operator.pos,
+    infix_operators = {
+        '+': operator.add,
+        '-': operator.sub,
+        '*': operator.mul,
+        '/': operator.truediv,
     }
-    
-    def _eval_node(node):
-        """ASTノードを安全に評価"""
-        if isinstance(node, ast.Constant):
-            return node.value
-        elif isinstance(node, ast.BinOp):
-            left = _eval_node(node.left)
-            right = _eval_node(node.right)
-            op = operators.get(type(node.op))
-            if op is None:
-                raise ValueError("サポートされていない演算子です")
-            if isinstance(node.op, ast.Div) and right == 0:
-                raise ZeroDivisionError("ゼロで割ることはできません")
-            return op(left, right)
-        elif isinstance(node, ast.UnaryOp):
-            operand = _eval_node(node.operand)
-            op = operators.get(type(node.op))
-            if op is None:
-                raise ValueError("サポートされていない演算子です")
-            return op(operand)
-        else:
-            raise ValueError("サポートされていない式です")
-    
+    prefix_operators = {
+        '-': operator.neg,
+    }
+
+    def tokenize(expr: str) -> list[str]:
+        """式をトークンに分割"""
+        # 空白で区切った後、各部分を正規表現で分割
+        parts = expr.split()
+        tokens = []
+        for part in parts:
+            while part:
+                match = re.match(r'\d+(?:\.\d+)?|[+\-*/()]', part)
+                if match:
+                    tokens.append(match.group())
+                    part = part[match.end():]
+                else:
+                    raise ValueError(f"無効なトークン: {part}")
+        return tokens
+
+    def parse_expression(expr: str) -> list[Token]:
+        """操車場アルゴリズムを用いて式を評価"""
+        tokens = tokenize(expr)
+        stack: list[Union[InfixOp, PrefixOp, Paren]] = []
+        output: list[Token] = []
+        after_exp: bool = False  # False: 式の前（式が必要）、True: 式の後（演算子が必要）
+        
+        infix_precedence = {'+': 1, '-': 1, '*': 2, '/': 2}
+        prefix_precedence = {'-': 3}
+        
+        for token in tokens:
+            if re.match(r'\d+(?:\.\d+)?', token):
+                if after_exp:
+                    raise ValueError("式の連続は無効です")
+                output.append(float(token))
+                after_exp = True
+            elif token == '(':
+                stack.append(Paren())
+                after_exp = False
+            elif token == ')':
+                while stack:
+                    stack_head = stack[-1]
+                    if isinstance(stack_head, Paren):
+                        break
+                    output.append(stack_head)
+                    stack.pop()
+                if stack and isinstance(stack[-1], Paren):
+                    stack.pop()
+                else:
+                    raise ValueError("括弧の不一致")
+                after_exp = True
+            elif token in '+-*/':
+                if token == '-' and not after_exp:
+                    # 前置-
+                    while stack:
+                        stack_head = stack[-1]
+                        if not (isinstance(stack_head, PrefixOp) and
+                               prefix_precedence['-'] <= prefix_precedence[stack_head.op]):
+                            break
+                        output.append(stack_head)
+                        stack.pop()
+                    stack.append(PrefixOp('-'))
+                    after_exp = False
+                else:
+                    # 中置
+                    if not after_exp:
+                        raise ValueError("演算子の前に式が必要です")
+                    while stack:
+                        stack_head = stack[-1]
+                        if not (isinstance(stack_head, InfixOp) and
+                               infix_precedence[token] <= infix_precedence[stack_head.op]):
+                            break
+                        output.append(stack_head)
+                        stack.pop()
+                    stack.append(InfixOp(token))
+                    after_exp = False
+            else:
+                raise AssertionError(f"予期しないトークン: {token}")
+        
+        if not after_exp:
+            raise ValueError("式が不完全です")
+        
+        while stack:
+            stack_head = stack[-1]
+            if isinstance(stack_head, Paren):
+                raise ValueError("括弧の不一致")
+            output.append(stack_head)
+            stack.pop()
+        
+        return output
+
+    def evaluate_rpn(rpn: list[Token]) -> float:
+        """逆ポーランド記法で評価"""
+        stack: list[float] = []
+        for token in rpn:
+            if isinstance(token, float):
+                stack.append(token)
+            elif isinstance(token, PrefixOp):
+                operand = stack.pop()
+                stack.append(prefix_operators[token.op](operand))
+            elif isinstance(token, InfixOp):
+                right = stack.pop()
+                left = stack.pop()
+                op = infix_operators[token.op]
+                if token.op == '/' and right == 0:
+                    raise ZeroDivisionError("ゼロで割ることはできません")
+                stack.append(op(left, right))
+            else:
+                raise AssertionError(f"予期しないトークン: {token}")
+        return stack[0]
+
     try:
-        # 式をASTに解析
-        tree = ast.parse(expression, mode='eval')
-        # ASTを評価
-        result = _eval_node(tree.body)
+        # 式をパース
+        rpn = parse_expression(expression)
+        # RPNを評価
+        result = evaluate_rpn(rpn)
         return result
-    except SyntaxError:
-        raise ValueError("無効な式です")
     except (ValueError, ZeroDivisionError):
         raise
     except Exception as e:
