@@ -60,7 +60,9 @@ def calculate(expression):
         # ASTを評価
         result = _eval_node(tree.body)
         return result
-    except (SyntaxError, ValueError, ZeroDivisionError):
+    except SyntaxError:
+        raise ValueError("無効な式です")
+    except (ValueError, ZeroDivisionError):
         raise
     except Exception as e:
         raise ValueError(f"式の評価中にエラーが発生しました: {e}")
