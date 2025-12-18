@@ -60,10 +60,8 @@ def calculate(expression):
         # ASTを評価
         result = _eval_node(tree.body)
         return result
-    except ZeroDivisionError:
+    except (SyntaxError, ValueError, ZeroDivisionError):
         raise
-    except (SyntaxError, ValueError):
-        raise ValueError("無効な式です")
     except Exception as e:
         raise ValueError(f"式の評価中にエラーが発生しました: {e}")
 
@@ -77,7 +75,7 @@ def main():
     print("=" * 50)
     print("使い方: 計算式を入力してください（例: 2 + 3）")
     print("対応演算: + (加算), - (減算), * (乗算), / (除算)")
-    print("終了するには 'q' または 'quit' を入力してください")
+    print("終了するには 'q', 'quit', または 'exit' を入力してください")
     print("=" * 50)
     print()
     
